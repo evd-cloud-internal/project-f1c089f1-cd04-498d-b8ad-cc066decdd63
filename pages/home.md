@@ -16,7 +16,7 @@ This page is the executive nerve center. It starts with what needs your attentio
 
 ## Attention Now: Signals Outside Normal Range
 
-Not every month-over-month change matters. These control charts scan every signal subcategory and flag only the ones where the most recent month fell outside statistical control limits -- a less than 0.3% probability event under stable conditions. If nothing appears here, the market is behaving normally. If something does, it warrants investigation.
+Not every month-over-month change matters. These control charts scan every signal subcategory and flag only the ones where the most recent complete month fell outside statistical control limits -- a less than 0.3% probability event under stable conditions. If nothing appears here, the market is behaving normally. If something does, it warrants investigation.
 
 ```sql out_of_control_summary
 with monthly as (
@@ -67,7 +67,12 @@ latest as (
         greatest(0, round(s.mean_amt - 3 * s.sigma_amt, 0)) as lcl_dollars
     from monthly m
     inner join stats s on m.subcategory = s.subcategory
-    where m.record_month = (select max(record_month) from gold_signal_velocity_trends)
+    where m.record_month = (
+        select distinct record_month
+        from gold_signal_velocity_trends
+        order by record_month desc
+        limit 1 offset 1
+    )
 )
 select
     subcategory,
@@ -97,106 +102,186 @@ where current_count > ucl_count
 order by subcategory
 ```
 
-{% table data="out_of_control_summary" %}
-    {% dimension value="subcategory" /%}
-    {% measure value="volume_flag" /%}
-    {% measure value="current_count" fmt="num0" /%}
-    {% measure value="mean_count" fmt="num0" /%}
-    {% measure value="ucl_count" fmt="num0" /%}
-    {% measure value="dollar_flag" /%}
-    {% measure value="current_dollars" fmt="usd0" /%}
-    {% measure value="mean_dollars" fmt="usd0" /%}
-    {% measure value="ucl_dollars" fmt="usd0" /%}
-{% /table %}
+{% table data="out_of_control_summary" /%}
 
 ---
 
-## Last 30 Days at a Glance
+## Latest Month at a Glance
+
+```sql latest_month_kpis
+with anchor as (
+    select distinct record_month
+    from gold_signal_velocity_trends
+    order by record_month desc
+    limit 2
+),
+current_month as (select max(record_month) as mo from anchor),
+prior_month as (select min(record_month) as mo from anchor),
+curr as (
+    select
+        category, subcategory,
+        sum(current_month_count) as cnt,
+        sum(current_month_amount) as amt
+    from gold_signal_velocity_trends
+    where record_month = (select mo from current_month)
+    group by 1, 2
+),
+prev as (
+    select
+        category, subcategory,
+        sum(current_month_count) as cnt,
+        sum(current_month_amount) as amt
+    from gold_signal_velocity_trends
+    where record_month = (select mo from prior_month)
+    group by 1, 2
+)
+select
+    'Total Signals' as metric,
+    (select sum(cnt)::double from curr where category != 'Metadata') as current_month,
+    (select sum(cnt)::double from prev where category != 'Metadata') as prior_month,
+    (select sum(cnt)::double from curr where category != 'Metadata')
+    - (select sum(cnt)::double from prev where category != 'Metadata') as delta
+
+union all
+
+select 'Owner Pressure',
+    (select sum(cnt)::double from curr where subcategory = 'Owner Pressure Signals'),
+    (select sum(cnt)::double from prev where subcategory = 'Owner Pressure Signals'),
+    (select sum(cnt)::double from curr where subcategory = 'Owner Pressure Signals')
+    - (select sum(cnt)::double from prev where subcategory = 'Owner Pressure Signals')
+
+union all
+
+select 'Equity Unlocks',
+    (select sum(cnt)::double from curr where subcategory = 'Equity Unlock Signals'),
+    (select sum(cnt)::double from prev where subcategory = 'Equity Unlock Signals'),
+    (select sum(cnt)::double from curr where subcategory = 'Equity Unlock Signals')
+    - (select sum(cnt)::double from prev where subcategory = 'Equity Unlock Signals')
+
+union all
+
+select 'Capital & Leverage Volume ($)',
+    (select sum(amt)::double from curr where category = 'Capital & Leverage Intelligence'),
+    (select sum(amt)::double from prev where category = 'Capital & Leverage Intelligence'),
+    (select sum(amt)::double from curr where category = 'Capital & Leverage Intelligence')
+    - (select sum(amt)::double from prev where category = 'Capital & Leverage Intelligence')
+```
 
 {% row %}
     {% big_value
-        data="gold_executive_signals_summary"
-        value="signals_last_30_days"
-        title="Total Signals (30 Days)"
+        data="latest_month_kpis"
+        value="total_signals"
+        title="Total Signals (Latest Month)"
         fmt="num0"
+        comparison="prior_total_signals"
+        comparison_title="vs prior month"
     /%}
     {% big_value
-        data="gold_executive_signals_summary"
-        value="transaction_propensity_last_30d"
+        data="latest_month_kpis"
+        value="transaction_propensity"
         title="Transaction Propensity"
         fmt="num0"
     /%}
     {% big_value
-        data="gold_executive_signals_summary"
-        value="capital_leverage_volume_last_30d"
+        data="latest_month_kpis"
+        value="capital_leverage_volume"
         title="Capital & Leverage Volume"
         fmt="usd0"
+        comparison="prior_capital_leverage_volume"
+        comparison_title="vs prior month"
     /%}
 {% /row %}
 
 {% row %}
     {% big_value
-        data="gold_executive_signals_summary"
-        value="equity_unlock_last_30d"
+        data="latest_month_kpis"
+        value="equity_unlocks"
         title="Equity Unlocks"
         fmt="num0"
+        comparison="prior_equity_unlocks"
+        comparison_title="vs prior month"
     /%}
     {% big_value
-        data="gold_executive_signals_summary"
-        value="owner_pressure_last_30d"
+        data="latest_month_kpis"
+        value="owner_pressure"
         title="Owner Pressure"
         fmt="num0"
+        comparison="prior_owner_pressure"
+        comparison_title="vs prior month"
     /%}
     {% big_value
-        data="gold_executive_signals_summary"
-        value="forced_sale_last_30d"
+        data="latest_month_kpis"
+        value="forced_sales"
         title="Forced Sales"
         fmt="num0"
     /%}
     {% big_value
-        data="gold_executive_signals_summary"
-        value="blocker_clearance_last_30d"
+        data="latest_month_kpis"
+        value="blockers_cleared"
         title="Blockers Cleared"
         fmt="num0"
     /%}
 {% /row %}
 
-### 30-Day vs Prior 30-Day Comparison
+### Month-over-Month Comparison
 
 ```sql period_comparison
+with anchor as (
+    select distinct record_month
+    from gold_signal_velocity_trends
+    order by record_month desc
+    limit 2
+),
+current_month as (select max(record_month) as mo from anchor),
+prior_month as (select min(record_month) as mo from anchor),
+curr as (
+    select
+        category, subcategory,
+        sum(current_month_count) as cnt,
+        sum(current_month_amount) as amt
+    from gold_signal_velocity_trends
+    where record_month = (select mo from current_month)
+    group by 1, 2
+),
+prev as (
+    select
+        category, subcategory,
+        sum(current_month_count) as cnt,
+        sum(current_month_amount) as amt
+    from gold_signal_velocity_trends
+    where record_month = (select mo from prior_month)
+    group by 1, 2
+)
 select
     'Total Signals' as metric,
-    round(signals_last_30_days::double, 0) as current_30_days,
-    round(signals_prior_30_days::double, 0) as prior_30_days,
-    round((signals_last_30_days - signals_prior_30_days)::double, 0) as delta
-from gold_executive_signals_summary
+    (select sum(cnt) from curr where category != 'Metadata') as current_month,
+    (select sum(cnt) from prev where category != 'Metadata') as prior_month,
+    (select sum(cnt) from curr where category != 'Metadata')
+    - (select sum(cnt) from prev where category != 'Metadata') as delta
 
 union all
 
-select
-    'Owner Pressure',
-    round(owner_pressure_last_30d::double, 0),
-    round(owner_pressure_prior_30d::double, 0),
-    round(owner_pressure_delta_30d::double, 0)
-from gold_executive_signals_summary
+select 'Owner Pressure',
+    (select sum(cnt) from curr where subcategory = 'Owner Pressure Signals'),
+    (select sum(cnt) from prev where subcategory = 'Owner Pressure Signals'),
+    (select sum(cnt) from curr where subcategory = 'Owner Pressure Signals')
+    - (select sum(cnt) from prev where subcategory = 'Owner Pressure Signals')
 
 union all
 
-select
-    'Equity Unlocks',
-    round(equity_unlock_last_30d::double, 0),
-    round(equity_unlock_prior_30d::double, 0),
-    round(equity_unlock_delta_30d::double, 0)
-from gold_executive_signals_summary
+select 'Equity Unlocks',
+    (select sum(cnt) from curr where subcategory = 'Equity Unlock Signals'),
+    (select sum(cnt) from prev where subcategory = 'Equity Unlock Signals'),
+    (select sum(cnt) from curr where subcategory = 'Equity Unlock Signals')
+    - (select sum(cnt) from prev where subcategory = 'Equity Unlock Signals')
 
 union all
 
-select
-    'Capital & Leverage Volume ($)',
-    capital_leverage_volume_last_30d,
-    capital_leverage_volume_prior_30d,
-    capital_leverage_volume_last_30d - capital_leverage_volume_prior_30d
-from gold_executive_signals_summary
+select 'Capital & Leverage Volume ($)',
+    (select sum(amt) from curr where category = 'Capital & Leverage Intelligence'),
+    (select sum(amt) from prev where category = 'Capital & Leverage Intelligence'),
+    (select sum(amt) from curr where category = 'Capital & Leverage Intelligence')
+    - (select sum(amt) from prev where category = 'Capital & Leverage Intelligence')
 ```
 
 {% table data="period_comparison" /%}
@@ -205,7 +290,7 @@ from gold_executive_signals_summary
 
 ## Divergence Monitor: Paired Signals That Tell a Story
 
-Individual signals are informative. Pairs of signals moving in opposite directions are diagnostic. These charts overlay two related subcategories so you can see divergence at a glance. Lighter lines show 3-month and 6-month moving averages to reveal the underlying trend beneath monthly noise.
+Individual signals are informative. Pairs of signals moving in opposite directions are diagnostic. These charts overlay two related subcategories so you can see divergence at a glance. Lighter lines show 6-month moving averages to reveal the underlying trend beneath monthly noise.
 
 ### Equity Unlocks vs Owner Pressure
 
@@ -226,12 +311,10 @@ with_ma as (
         record_month,
         subcategory,
         cnt,
-        round(avg(cnt) over (partition by subcategory order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (partition by subcategory order by record_month rows between 5 preceding and current row), 0) as ma_6
     from base
 )
 select record_month, subcategory as series, cnt as monthly_count from with_ma
-union all select record_month, subcategory || ' (3-Mo MA)', ma_3 from with_ma
 union all select record_month, subcategory || ' (6-Mo MA)', ma_6 from with_ma
 order by 1, 2
 ```
@@ -241,17 +324,15 @@ order by 1, 2
     x="record_month"
     y="monthly_count"
     series="series"
-    series_order=["Equity Unlock Signals", "Owner Pressure Signals", "Equity Unlock Signals (3-Mo MA)", "Owner Pressure Signals (3-Mo MA)", "Equity Unlock Signals (6-Mo MA)", "Owner Pressure Signals (6-Mo MA)"]
+    series_order=["Equity Unlock Signals", "Owner Pressure Signals", "Equity Unlock Signals (6-Mo MA)", "Owner Pressure Signals (6-Mo MA)"]
     y_fmt="num0"
     title="Equity Unlocks vs Owner Pressure -- Monthly Volume"
-    subtitle="Divergence = diagnostic. Same direction = reinforcing. Lighter lines = smoothed trend."
+    subtitle="Divergence = diagnostic. Same direction = reinforcing. Lighter lines = 6-month smoothed trend."
     chart_options={
         series_colors = {
             "Equity Unlock Signals" = "#2CA02C"
-            "Equity Unlock Signals (3-Mo MA)" = "#7EC87E"
             "Equity Unlock Signals (6-Mo MA)" = "#B5E0B5"
             "Owner Pressure Signals" = "#D62728"
-            "Owner Pressure Signals (3-Mo MA)" = "#E87A7B"
             "Owner Pressure Signals (6-Mo MA)" = "#F2B4B4"
         }
     }
@@ -280,12 +361,10 @@ with_ma as (
         record_month,
         signal_name,
         cnt,
-        round(avg(cnt) over (partition by signal_name order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (partition by signal_name order by record_month rows between 5 preceding and current row), 0) as ma_6
     from base
 )
 select record_month, signal_name as series, cnt as monthly_count from with_ma
-union all select record_month, signal_name || ' (3-Mo MA)', ma_3 from with_ma
 union all select record_month, signal_name || ' (6-Mo MA)', ma_6 from with_ma
 order by 1, 2
 ```
@@ -295,17 +374,15 @@ order by 1, 2
     x="record_month"
     y="monthly_count"
     series="series"
-    series_order=["Capital & Leverage", "Forced Sale Signals", "Capital & Leverage (3-Mo MA)", "Forced Sale Signals (3-Mo MA)", "Capital & Leverage (6-Mo MA)", "Forced Sale Signals (6-Mo MA)"]
+    series_order=["Capital & Leverage", "Forced Sale Signals", "Capital & Leverage (6-Mo MA)", "Forced Sale Signals (6-Mo MA)"]
     y_fmt="num0"
     title="Capital & Leverage vs Forced Sales -- Monthly Volume"
     subtitle="Healthy market = high originations, low forced sales. Turning market = convergence."
     chart_options={
         series_colors = {
             "Capital & Leverage" = "#006BA4"
-            "Capital & Leverage (3-Mo MA)" = "#5F9ED1"
             "Capital & Leverage (6-Mo MA)" = "#A2C8EC"
             "Forced Sale Signals" = "#D62728"
-            "Forced Sale Signals (3-Mo MA)" = "#E87A7B"
             "Forced Sale Signals (6-Mo MA)" = "#F2B4B4"
         }
     }
@@ -315,97 +392,57 @@ order by 1, 2
 
 ## Market Pulse: All Signal Categories
 
-The broadest view. Every recorded instrument classified into one of five signal families (Metadata excluded), tracked monthly. Solid lines show monthly actuals; lighter lines show 6-month moving averages to reveal directional trends beneath the noise.
+The broadest view. Every recorded instrument classified into one of five signal families (Metadata excluded), tracked monthly.
 
-```sql market_pulse_volume
-with base as (
+```sql market_pulse_summary
+with monthly as (
     select
         record_month,
         category,
-        sum(current_month_count) as cnt
-    from gold_signal_velocity_trends
-    where category != 'Metadata'
-    group by 1, 2
-),
-with_ma as (
-    select record_month, category, cnt,
-        round(avg(cnt) over (partition by category order by record_month rows between 5 preceding and current row), 0) as ma_6
-    from base
-)
-select record_month, category as series, cnt as monthly_count from with_ma
-union all select record_month, category || ' (6-Mo MA)', ma_6 from with_ma
-order by 1, 2
-```
-
-{% line_chart
-    data="market_pulse_volume"
-    x="record_month"
-    y="monthly_count"
-    series="series"
-    series_order=["Capital & Leverage Intelligence", "Transaction Propensity Intelligence", "Transaction Feasibility & Close Intelligence", "Market Dynamics Intelligence", "Regulatory, Risk & Claims Intelligence", "Capital & Leverage Intelligence (6-Mo MA)", "Transaction Propensity Intelligence (6-Mo MA)", "Transaction Feasibility & Close Intelligence (6-Mo MA)", "Market Dynamics Intelligence (6-Mo MA)", "Regulatory, Risk & Claims Intelligence (6-Mo MA)"]
-    y_fmt="num0"
-    title="All Signal Categories -- Monthly Instrument Count"
-    subtitle="Solid = monthly actuals. Faded = 6-month moving average."
-    chart_options={
-        series_colors = {
-            "Capital & Leverage Intelligence" = "#006BA4"
-            "Transaction Propensity Intelligence" = "#9467BD"
-            "Transaction Feasibility & Close Intelligence" = "#D62728"
-            "Market Dynamics Intelligence" = "#8C564B"
-            "Regulatory, Risk & Claims Intelligence" = "#2CA02C"
-            "Capital & Leverage Intelligence (6-Mo MA)" = "#A2C8EC"
-            "Transaction Propensity Intelligence (6-Mo MA)" = "#C5B0D5"
-            "Transaction Feasibility & Close Intelligence (6-Mo MA)" = "#F2B4B4"
-            "Market Dynamics Intelligence (6-Mo MA)" = "#C49C94"
-            "Regulatory, Risk & Claims Intelligence (6-Mo MA)" = "#B5E0B5"
-        }
-    }
-/%}
-
-```sql market_pulse_dollars
-with base as (
-    select
-        record_month,
-        category,
+        sum(current_month_count) as cnt,
         sum(current_month_amount) as amt
     from gold_signal_velocity_trends
     where category != 'Metadata'
     group by 1, 2
 ),
 with_ma as (
-    select record_month, category, amt,
-        round(avg(amt) over (partition by category order by record_month rows between 5 preceding and current row), 0) as ma_6
-    from base
-)
-select record_month, category as series, amt as monthly_dollars from with_ma
-union all select record_month, category || ' (6-Mo MA)', ma_6 from with_ma
-order by 1, 2
+    select
+        record_month,
+        category,
+        cnt,
+        amt,
+        round(avg(cnt) over (partition by category order by record_month rows between 5 preceding and current row), 0) as ma_6_count,
+        round(avg(amt) over (partition by category order by record_month rows between 5 preceding and current row), 0) as ma_6_dollars
+    from monthly
+),
+anchor as (
+    select distinct record_month
+    from monthly
+    order by record_month desc
+    limit 2
+),
+current_month as (select max(record_month) as mo from anchor),
+prior_month as (select min(record_month) as mo from anchor)
+select
+    c.category,
+    c.cnt as current_count,
+    p.cnt as prior_count,
+    c.cnt - p.cnt as count_delta,
+    c.ma_6_count as six_mo_avg_count,
+    c.amt as current_dollars,
+    p.amt as prior_dollars,
+    c.amt - p.amt as dollar_delta,
+    c.ma_6_dollars as six_mo_avg_dollars
+from with_ma c
+inner join with_ma p on c.category = p.category
+cross join current_month cm
+cross join prior_month pm
+where c.record_month = cm.mo
+  and p.record_month = pm.mo
+order by c.cnt desc
 ```
 
-{% line_chart
-    data="market_pulse_dollars"
-    x="record_month"
-    y="monthly_dollars"
-    series="series"
-    series_order=["Capital & Leverage Intelligence", "Transaction Propensity Intelligence", "Transaction Feasibility & Close Intelligence", "Market Dynamics Intelligence", "Regulatory, Risk & Claims Intelligence", "Capital & Leverage Intelligence (6-Mo MA)", "Transaction Propensity Intelligence (6-Mo MA)", "Transaction Feasibility & Close Intelligence (6-Mo MA)", "Market Dynamics Intelligence (6-Mo MA)", "Regulatory, Risk & Claims Intelligence (6-Mo MA)"]
-    y_fmt="usd0"
-    title="All Signal Categories -- Monthly Dollar Volume"
-    subtitle="Solid = monthly actuals. Faded = 6-month moving average."
-    chart_options={
-        series_colors = {
-            "Capital & Leverage Intelligence" = "#006BA4"
-            "Transaction Propensity Intelligence" = "#9467BD"
-            "Transaction Feasibility & Close Intelligence" = "#D62728"
-            "Market Dynamics Intelligence" = "#8C564B"
-            "Regulatory, Risk & Claims Intelligence" = "#2CA02C"
-            "Capital & Leverage Intelligence (6-Mo MA)" = "#A2C8EC"
-            "Transaction Propensity Intelligence (6-Mo MA)" = "#C5B0D5"
-            "Transaction Feasibility & Close Intelligence (6-Mo MA)" = "#F2B4B4"
-            "Market Dynamics Intelligence (6-Mo MA)" = "#C49C94"
-            "Regulatory, Risk & Claims Intelligence (6-Mo MA)" = "#B5E0B5"
-        }
-    }
-/%}
+{% table data="market_pulse_summary" /%}
 
 ---
 
@@ -514,14 +551,7 @@ from ranked
 order by rn
 ```
 
-{% table data="pareto_volume" %}
-    {% dimension value="rank" /%}
-    {% dimension value="subcategory" /%}
-    {% measure value="total_count" fmt="num0" /%}
-    {% measure value="pct_of_total" fmt="num1" /%}
-    {% measure value="cumulative_pct" fmt="num1" /%}
-    {% measure value="in_80" /%}
-{% /table %}
+{% table data="pareto_volume" /%}
 
 ### Dollar Pareto -- Last 12 Months
 
@@ -558,14 +588,7 @@ from ranked
 order by rn
 ```
 
-{% table data="pareto_dollars" %}
-    {% dimension value="rank" /%}
-    {% dimension value="subcategory" /%}
-    {% measure value="total_amount" fmt="usd0" /%}
-    {% measure value="pct_of_total" fmt="num1" /%}
-    {% measure value="cumulative_pct" fmt="num1" /%}
-    {% measure value="in_80" /%}
-{% /table %}
+{% table data="pareto_dollars" /%}
 
 ---
 
@@ -590,12 +613,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -625,14 +646,13 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Capital & Leverage Intelligence -- Volume Control Chart"
     subtitle="Points outside UCL/LCL represent statistically significant shifts in lending activity"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -649,12 +669,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -684,13 +702,12 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Capital & Leverage Intelligence -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
@@ -719,12 +736,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -754,14 +769,13 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Transaction Propensity Intelligence -- Volume Control Chart"
     subtitle="All 7 subcategories combined"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -778,12 +792,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -813,19 +825,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Transaction Propensity Intelligence -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_txn_propensity_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Transaction Timing Triggers
 
@@ -840,12 +852,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -875,13 +885,12 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Transaction Timing Triggers -- Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -898,12 +907,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -933,19 +940,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Transaction Timing Triggers -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_timing_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Equity Unlock Signals
 
@@ -960,12 +967,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -995,14 +1000,13 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Equity Unlock Signals -- Volume Control Chart"
     subtitle="Breakout above UCL = abnormal rate of borrower departures"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1019,12 +1023,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1054,19 +1056,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Equity Unlock Signals -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_equity_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Owner Pressure Signals
 
@@ -1083,12 +1085,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1118,14 +1118,13 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Owner Pressure Signals -- Volume Control Chart"
     subtitle="Breakout above UCL = statistically significant increase in financial distress"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1142,12 +1141,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1177,19 +1174,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Owner Pressure Signals -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_pressure_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Forced Sale Signals
 
@@ -1204,12 +1201,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1239,14 +1234,13 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Forced Sale Signals -- Volume Control Chart"
     subtitle="Highest distress subcategory. Breakout = genuine shift in foreclosure activity."
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1263,12 +1257,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1298,19 +1290,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Forced Sale Signals -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_forced_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Blocker Clearance Signals
 
@@ -1325,12 +1317,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1360,13 +1350,12 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Blocker Clearance Signals -- Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1383,12 +1372,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1418,19 +1405,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Blocker Clearance Signals -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_blocker_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Life and Legal Triggers
 
@@ -1445,12 +1432,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1480,13 +1465,12 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Life and Legal Triggers -- Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1503,12 +1487,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1538,19 +1520,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Life and Legal Triggers -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_life_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Deal Propensity Events
 
@@ -1565,12 +1547,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1600,13 +1580,12 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Deal Propensity Events -- Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1633,12 +1612,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1668,14 +1645,13 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Transaction Feasibility & Close -- Volume Control Chart"
     subtitle="Spikes here mean deals are getting harder to close across the market"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1692,12 +1668,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1727,19 +1701,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Transaction Feasibility & Close -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_feasibility_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Title and Ownership Complexity
 
@@ -1754,12 +1728,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1789,13 +1761,12 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Title and Ownership Complexity -- Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1812,12 +1783,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, amt,
-        round(avg(amt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(amt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, amt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1847,19 +1816,19 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="usd0"
     title="Title and Ownership Complexity -- Dollar Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#D62728"
-            "3-Mo MA" = "#FF800E"
             "6-Mo MA" = "#898989"
         }
     }
 %}
     {% reference_line data="control_title_dollars_limits" y="ref_val" label="ref_label" color="#595959" line_options={ type = "dashed" width = 1 } /%}
 {% /line_chart %}
+
 
 ### Deal Complexity Events
 
@@ -1874,12 +1843,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1909,13 +1876,12 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Deal Complexity Events -- Volume Control Chart"
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -1940,12 +1906,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -1975,14 +1939,13 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Market Dynamics Intelligence -- Volume Control Chart"
     subtitle="Supply pipeline signals. Breakout = genuine shift in development activity."
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -2007,12 +1970,10 @@ with monthly as (
 ),
 with_ma as (
     select record_month, cnt,
-        round(avg(cnt) over (order by record_month rows between 2 preceding and current row), 0) as ma_3,
         round(avg(cnt) over (order by record_month rows between 5 preceding and current row), 0) as ma_6
     from monthly
 )
 select record_month, 'Monthly' as series, cnt as value from with_ma
-union all select record_month, '3-Mo MA', ma_3 from with_ma
 union all select record_month, '6-Mo MA', ma_6 from with_ma
 order by 1, 2
 ```
@@ -2042,14 +2003,13 @@ union all select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
     x="record_month"
     y="value"
     series="series"
-    series_order=["Monthly", "3-Mo MA", "6-Mo MA"]
+    series_order=["Monthly", "6-Mo MA"]
     y_fmt="num0"
     title="Regulatory, Risk & Claims -- Volume Control Chart"
     subtitle="Low volume, high compliance importance. Breakout = investigate immediately."
     chart_options={
         series_colors = {
             "Monthly" = "#006BA4"
-            "3-Mo MA" = "#5F9ED1"
             "6-Mo MA" = "#898989"
         }
     }
@@ -2170,4 +2130,4 @@ The 3-year lookback window provides 36 data points per subcategory, which is suf
 
 ### Moving Averages
 
-The 3-month and 6-month moving averages overlaid on each chart smooth out monthly noise to reveal directional trends. The 3-month average (approximately 13 weeks) captures short-term momentum shifts. The 6-month average (approximately 26 weeks) shows the medium-term structural trend. When the monthly value diverges sharply from the 6-month average, that divergence is itself a signal -- even if the monthly value stays within control limits.
+The 6-month moving average overlaid on each chart smooths out monthly noise to reveal directional trends. It approximates a 26-week window and shows the medium-term structural trend. When the monthly value diverges sharply from the 6-month average, that divergence is itself a signal -- even if the monthly value stays within control limits.
