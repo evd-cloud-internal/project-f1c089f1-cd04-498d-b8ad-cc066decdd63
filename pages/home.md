@@ -106,27 +106,27 @@ These weights feed the `weighted_distress_score` and `weighted_revenue_score` on
 ```sql period_comparison
 select
     'Total Signals' as metric,
-    signals_last_30_days::double as current_30_days,
-    signals_prior_30_days::double as prior_30_days,
-    (signals_last_30_days - signals_prior_30_days)::double as delta
+    round(signals_last_30_days::double, 0) as current_30_days,
+    round(signals_prior_30_days::double, 0) as prior_30_days,
+    round((signals_last_30_days - signals_prior_30_days)::double, 0) as delta
 from gold_executive_signals_summary
 
 union all
 
 select
     'Owner Pressure',
-    owner_pressure_last_30d::double,
-    owner_pressure_prior_30d::double,
-    owner_pressure_delta_30d::double
+    round(owner_pressure_last_30d::double, 0),
+    round(owner_pressure_prior_30d::double, 0),
+    round(owner_pressure_delta_30d::double, 0)
 from gold_executive_signals_summary
 
 union all
 
 select
     'Equity Unlocks',
-    equity_unlock_last_30d::double,
-    equity_unlock_prior_30d::double,
-    equity_unlock_delta_30d::double
+    round(equity_unlock_last_30d::double, 0),
+    round(equity_unlock_prior_30d::double, 0),
+    round(equity_unlock_delta_30d::double, 0)
 from gold_executive_signals_summary
 
 union all
@@ -139,7 +139,12 @@ select
 from gold_executive_signals_summary
 ```
 
-{% table data="period_comparison" /%}
+{% table data="period_comparison" %}
+    {% dimension value="metric" /%}
+    {% measure value="current_30_days" fmt="num0" /%}
+    {% measure value="prior_30_days" fmt="num0" /%}
+    {% measure value="delta" fmt="num0" /%}
+{% /table %}
 
 ---
 
@@ -322,10 +327,28 @@ ranked as (
         subcategory,
         total_count,
         sum(total_count) over (order by total_count desc) as running_total,
-        sum(total_count) over () as grand_total
+        sum(total_count) over () as grand_total,
+        row_number() over (order by total_count desc) as rn
     from subcategory_totals
 )
 select
+    lpad(rn::varchar, 2, '0') || '. ' ||
+        case subcategory
+            when 'Title and Ownership Complexity' then 'Title & Ownership'
+            when 'Life and Legal Triggers' then 'Life & Legal'
+            when 'Equity Unlock Signals' then 'Equity Unlock'
+            when 'Transaction Timing Triggers' then 'Transaction Timing'
+            when 'Capital & Leverage Intelligence' then 'Capital & Leverage'
+            when 'Owner Pressure Signals' then 'Owner Pressure'
+            when 'Blocker Clearance Signals' then 'Blocker Clearance'
+            when 'Forced Sale Signals' then 'Forced Sale'
+            when 'Supply Signals' then 'Supply'
+            when 'Deal Complexity Events' then 'Deal Complexity'
+            when 'Deal Propensity Events' then 'Deal Propensity'
+            when 'Regulatory, Risk & Claims Intelligence' then 'Regulatory & Risk'
+            when 'Title Registry' then 'Title Registry'
+            else subcategory
+        end as chart_label,
     subcategory,
     total_count,
     round(100.0 * total_count / grand_total, 1) as pct_of_total,
@@ -337,12 +360,15 @@ order by total_count desc
 
 {% combo_chart
     data="pareto_volume"
-    x="subcategory"
+    x="chart_label"
     x_sort="data"
     y_fmt="num0"
     y2_fmt="num1"
     title="Signal Volume Pareto -- Last 12 Months"
     subtitle="Bars = instrument count per subcategory. Line = cumulative % of total."
+    y2_axis_options={
+        max = 105
+    }
 %}
     {% bar
         y="total_count"
@@ -353,7 +379,13 @@ order by total_count desc
     /%}
 {% /combo_chart %}
 
-{% table data="pareto_volume" /%}
+{% table data="pareto_volume" %}
+    {% dimension value="subcategory" /%}
+    {% measure value="total_count" fmt="num0" /%}
+    {% measure value="pct_of_total" fmt="num1" /%}
+    {% measure value="cumulative_pct" fmt="num1" /%}
+    {% measure value="in_80" /%}
+{% /table %}
 
 ### Dollar Pareto -- Last 12 Months
 
@@ -376,10 +408,28 @@ ranked as (
         subcategory,
         total_amount,
         sum(total_amount) over (order by total_amount desc) as running_total,
-        sum(total_amount) over () as grand_total
+        sum(total_amount) over () as grand_total,
+        row_number() over (order by total_amount desc) as rn
     from subcategory_totals
 )
 select
+    lpad(rn::varchar, 2, '0') || '. ' ||
+        case subcategory
+            when 'Title and Ownership Complexity' then 'Title & Ownership'
+            when 'Life and Legal Triggers' then 'Life & Legal'
+            when 'Equity Unlock Signals' then 'Equity Unlock'
+            when 'Transaction Timing Triggers' then 'Transaction Timing'
+            when 'Capital & Leverage Intelligence' then 'Capital & Leverage'
+            when 'Owner Pressure Signals' then 'Owner Pressure'
+            when 'Blocker Clearance Signals' then 'Blocker Clearance'
+            when 'Forced Sale Signals' then 'Forced Sale'
+            when 'Supply Signals' then 'Supply'
+            when 'Deal Complexity Events' then 'Deal Complexity'
+            when 'Deal Propensity Events' then 'Deal Propensity'
+            when 'Regulatory, Risk & Claims Intelligence' then 'Regulatory & Risk'
+            when 'Title Registry' then 'Title Registry'
+            else subcategory
+        end as chart_label,
     subcategory,
     total_amount,
     round(100.0 * total_amount / nullif(grand_total, 0), 1) as pct_of_total,
@@ -391,12 +441,15 @@ order by total_amount desc
 
 {% combo_chart
     data="pareto_dollars"
-    x="subcategory"
+    x="chart_label"
     x_sort="data"
     y_fmt="usd0"
     y2_fmt="num1"
     title="Signal Dollar Pareto -- Last 12 Months"
     subtitle="Bars = total dollar volume per subcategory. Line = cumulative % of total."
+    y2_axis_options={
+        max = 105
+    }
 %}
     {% bar
         y="total_amount"
@@ -407,7 +460,13 @@ order by total_amount desc
     /%}
 {% /combo_chart %}
 
-{% table data="pareto_dollars" /%}
+{% table data="pareto_dollars" %}
+    {% dimension value="subcategory" /%}
+    {% measure value="total_amount" fmt="usd0" /%}
+    {% measure value="pct_of_total" fmt="num1" /%}
+    {% measure value="cumulative_pct" fmt="num1" /%}
+    {% measure value="in_80" /%}
+{% /table %}
 
 ---
 
