@@ -103,11 +103,12 @@ These weights feed the `weighted_distress_score` and `weighted_revenue_score` on
 
 ### 30-Day vs Prior 30-Day Comparison
 
-```sql select
-    'Total Signals' as "Metric",
-    signals_last_30_days::double as "Current 30 Days",
-    signals_prior_30_days::double as "Prior 30 Days",
-    (signals_last_30_days - signals_prior_30_days)::double as "Delta"
+```sql period_comparison
+select
+    'Total Signals' as metric,
+    signals_last_30_days::double as current_30_days,
+    signals_prior_30_days::double as prior_30_days,
+    (signals_last_30_days - signals_prior_30_days)::double as delta
 from gold_executive_signals_summary
 
 union all
@@ -325,18 +326,18 @@ ranked as (
     from subcategory_totals
 )
 select
-    subcategory as "Subcategory",
-    total_count as "Total Instruments",
-    round(100.0 * total_count / grand_total, 1) as "% of Total",
-    round(100.0 * running_total / grand_total, 1) as "Cumulative %",
-    case when running_total - total_count < 0.8 * grand_total then 'Top 80%' else '' end as "In 80%"
+    subcategory,
+    total_count,
+    round(100.0 * total_count / grand_total, 1) as pct_of_total,
+    round(100.0 * running_total / grand_total, 1) as cumulative_pct,
+    case when running_total - total_count < 0.8 * grand_total then 'Top 80%' else '' end as in_80
 from ranked
 order by total_count desc
 ```
 
 {% combo_chart
     data="pareto_volume"
-    x="Subcategory"
+    x="subcategory"
     x_sort="data"
     y_fmt="num0"
     y2_fmt="num1"
@@ -344,12 +345,11 @@ order by total_count desc
     subtitle="Bars = instrument count per subcategory. Line = cumulative % of total."
 %}
     {% bar
-        y="Total Instruments"
+        y="total_count"
     /%}
     {% line
-        y="Cumulative %"
+        y="cumulative_pct"
         axis="y2"
-        options={ color="#C85200" type="solid" markers={ shape="circle" size=4 } }
     /%}
 {% /combo_chart %}
 
@@ -380,18 +380,18 @@ ranked as (
     from subcategory_totals
 )
 select
-    subcategory as "Subcategory",
-    total_amount as "Total Dollars",
-    round(100.0 * total_amount / nullif(grand_total, 0), 1) as "% of Total",
-    round(100.0 * running_total / nullif(grand_total, 0), 1) as "Cumulative %",
-    case when running_total - total_amount < 0.8 * grand_total then 'Top 80%' else '' end as "In 80%"
+    subcategory,
+    total_amount,
+    round(100.0 * total_amount / nullif(grand_total, 0), 1) as pct_of_total,
+    round(100.0 * running_total / nullif(grand_total, 0), 1) as cumulative_pct,
+    case when running_total - total_amount < 0.8 * grand_total then 'Top 80%' else '' end as in_80
 from ranked
 order by total_amount desc
 ```
 
 {% combo_chart
     data="pareto_dollars"
-    x="Subcategory"
+    x="subcategory"
     x_sort="data"
     y_fmt="usd0"
     y2_fmt="num1"
@@ -399,12 +399,11 @@ order by total_amount desc
     subtitle="Bars = total dollar volume per subcategory. Line = cumulative % of total."
 %}
     {% bar
-        y="Total Dollars"
+        y="total_amount"
     /%}
     {% line
-        y="Cumulative %"
+        y="cumulative_pct"
         axis="y2"
-        options={ color="#C85200" type="solid" markers={ shape="circle" size=4 } }
     /%}
 {% /combo_chart %}
 
@@ -496,7 +495,7 @@ order by v.record_month, v.subcategory
 
 ## Statistical Process Control -- Is the Change Real?
 
-A month-over-month spike looks alarming but might be normal variation. These control charts apply XmR (Individuals and Moving Range) analysis to distinguish signal from noise. The center line is the process mean. The upper and lower control limits (UCL/LCL) mark ±3σ -- anything inside is expected variation, anything outside is a statistically significant shift worth investigating.
+A month-over-month spike looks alarming but might be normal variation. These control charts apply XmR (Individuals and Moving Range) analysis to distinguish signal from noise. The center line is the process mean. The upper and lower control limits (UCL/LCL) mark +/-3 sigma -- anything inside is expected variation, anything outside is a statistically significant shift worth investigating.
 
 Four subcategories are charted below -- the ones with the most direct relevance to lending operations. Both volume and dollar versions are shown because a volume spike in low-dollar instruments has different implications than a dollar spike in high-value mortgages.
 
@@ -506,34 +505,24 @@ Core lending activity. A point outside the control limits means mortgage origina
 
 ```sql control_capital_volume
 with monthly as (
-    select
-        record_month,
-        sum(current_month_count) as cnt
+    select record_month, sum(current_month_count) as cnt
     from gold_signal_velocity_trends
     where subcategory = 'Capital & Leverage Intelligence'
     group by 1
 ),
 with_mr as (
-    select
-        record_month,
-        cnt,
+    select record_month, cnt,
         abs(cnt - lag(cnt) over (order by record_month)) as mr
     from monthly
 ),
 stats as (
-    select
-        round(avg(cnt), 1) as mean_val,
-        round(avg(mr) / 1.128, 1) as sigma
+    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma
     from with_mr
 )
 select
     m.record_month,
-    m.cnt as "Monthly Count",
-    s.mean_val as "Mean",
-    round(s.mean_val + 3 * s.sigma, 0) as "UCL",
-    greatest(0, round(s.mean_val - 3 * s.sigma, 0)) as "LCL"
+    m.cnt as monthly_count
 from monthly m
-cross join stats s
 order by m.record_month
 ```
 
@@ -552,17 +541,17 @@ stats as (
     select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma
     from with_mr
 )
-select 'UCL (3σ)' as label, round(mean_val + 3 * sigma, 0) as value from stats
+select round(mean_val + 3 * sigma, 0) as ref_val, 'UCL' as ref_label from stats
 union all
-select 'Mean', round(mean_val, 0) from stats
+select round(mean_val, 0), 'Mean' from stats
 union all
-select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
+select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
 ```
 
 {% line_chart
     data="control_capital_volume"
     x="record_month"
-    y="Monthly Count"
+    y="monthly_count"
     y_fmt="num0"
     title="Capital & Leverage -- Volume Control Chart (XmR)"
     subtitle="Points outside UCL/LCL represent statistically significant shifts in lending activity"
@@ -570,41 +559,38 @@ select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
         color_palette = ["#006BA4"]
     }
 %}
-    {% reference_line data="control_capital_volume_limits" y="value" label="label" color="#595959"
-        line_options={ type="dashed" width=1 }
+    {% reference_line
+        data="control_capital_volume_limits"
+        y="ref_val"
+        label="ref_label"
+        color="#595959"
+        line_options={
+            type = "dashed"
+            width = 1
+        }
     /%}
 {% /line_chart %}
 
 ```sql control_capital_dollars
 with monthly as (
-    select
-        record_month,
-        sum(current_month_amount) as amt
+    select record_month, sum(current_month_amount) as amt
     from gold_signal_velocity_trends
     where subcategory = 'Capital & Leverage Intelligence'
     group by 1
 ),
 with_mr as (
-    select
-        record_month,
-        amt,
+    select record_month, amt,
         abs(amt - lag(amt) over (order by record_month)) as mr
     from monthly
 ),
 stats as (
-    select
-        round(avg(amt), 0) as mean_val,
-        round(avg(mr) / 1.128, 0) as sigma
+    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma
     from with_mr
 )
 select
     m.record_month,
-    m.amt as "Monthly Dollars",
-    s.mean_val as "Mean",
-    round(s.mean_val + 3 * s.sigma, 0) as "UCL",
-    greatest(0, round(s.mean_val - 3 * s.sigma, 0)) as "LCL"
+    m.amt as monthly_dollars
 from monthly m
-cross join stats s
 order by m.record_month
 ```
 
@@ -623,25 +609,32 @@ stats as (
     select avg(amt) as mean_val, avg(mr) / 1.128 as sigma
     from with_mr
 )
-select 'UCL (3σ)' as label, round(mean_val + 3 * sigma, 0) as value from stats
+select round(mean_val + 3 * sigma, 0) as ref_val, 'UCL' as ref_label from stats
 union all
-select 'Mean', round(mean_val, 0) from stats
+select round(mean_val, 0), 'Mean' from stats
 union all
-select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
+select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
 ```
 
 {% line_chart
     data="control_capital_dollars"
     x="record_month"
-    y="Monthly Dollars"
+    y="monthly_dollars"
     y_fmt="usd0"
     title="Capital & Leverage -- Dollar Volume Control Chart (XmR)"
     chart_options={
         color_palette = ["#FF800E"]
     }
 %}
-    {% reference_line data="control_capital_dollars_limits" y="value" label="label" color="#595959"
-        line_options={ type="dashed" width=1 }
+    {% reference_line
+        data="control_capital_dollars_limits"
+        y="ref_val"
+        label="ref_label"
+        color="#595959"
+        line_options={
+            type = "dashed"
+            width = 1
+        }
     /%}
 {% /line_chart %}
 
@@ -657,92 +650,130 @@ with monthly as (
     group by 1
 ),
 with_mr as (
-    select record_month, cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr
+    select record_month, cnt,
+        abs(cnt - lag(cnt) over (order by record_month)) as mr
     from monthly
 ),
 stats as (
-    select round(avg(cnt), 1) as mean_val, round(avg(mr) / 1.128, 1) as sigma
+    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma
     from with_mr
 )
-select m.record_month, m.cnt as "Monthly Count", s.mean_val as "Mean",
-    round(s.mean_val + 3 * s.sigma, 0) as "UCL",
-    greatest(0, round(s.mean_val - 3 * s.sigma, 0)) as "LCL"
-from monthly m cross join stats s
+select
+    m.record_month,
+    m.cnt as monthly_count
+from monthly m
 order by m.record_month
 ```
 
 ```sql control_transaction_volume_limits
 with monthly as (
     select record_month, sum(current_month_count) as cnt
-    from gold_signal_velocity_trends where subcategory = 'Transaction Timing Triggers' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Transaction Timing Triggers'
+    group by 1
 ),
 with_mr as (
-    select cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr from monthly
+    select cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma from with_mr
+    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select 'UCL (3σ)' as label, round(mean_val + 3 * sigma, 0) as value from stats
-union all select 'Mean', round(mean_val, 0) from stats
-union all select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
+select round(mean_val + 3 * sigma, 0) as ref_val, 'UCL' as ref_label from stats
+union all
+select round(mean_val, 0), 'Mean' from stats
+union all
+select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
 ```
 
 {% line_chart
     data="control_transaction_volume"
     x="record_month"
-    y="Monthly Count"
+    y="monthly_count"
     y_fmt="num0"
     title="Transaction Timing Triggers -- Volume Control Chart (XmR)"
-    chart_options={ color_palette = ["#006BA4"] }
+    chart_options={
+        color_palette = ["#006BA4"]
+    }
 %}
-    {% reference_line data="control_transaction_volume_limits" y="value" label="label" color="#595959"
-        line_options={ type="dashed" width=1 } /%}
+    {% reference_line
+        data="control_transaction_volume_limits"
+        y="ref_val"
+        label="ref_label"
+        color="#595959"
+        line_options={
+            type = "dashed"
+            width = 1
+        }
+    /%}
 {% /line_chart %}
 
 ```sql control_transaction_dollars
 with monthly as (
     select record_month, sum(current_month_amount) as amt
-    from gold_signal_velocity_trends where subcategory = 'Transaction Timing Triggers' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Transaction Timing Triggers'
+    group by 1
 ),
 with_mr as (
-    select record_month, amt, abs(amt - lag(amt) over (order by record_month)) as mr from monthly
+    select record_month, amt,
+        abs(amt - lag(amt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select round(avg(amt), 0) as mean_val, round(avg(mr) / 1.128, 0) as sigma from with_mr
+    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select m.record_month, m.amt as "Monthly Dollars", s.mean_val as "Mean",
-    round(s.mean_val + 3 * s.sigma, 0) as "UCL",
-    greatest(0, round(s.mean_val - 3 * s.sigma, 0)) as "LCL"
-from monthly m cross join stats s
+select
+    m.record_month,
+    m.amt as monthly_dollars
+from monthly m
 order by m.record_month
 ```
 
 ```sql control_transaction_dollars_limits
 with monthly as (
     select record_month, sum(current_month_amount) as amt
-    from gold_signal_velocity_trends where subcategory = 'Transaction Timing Triggers' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Transaction Timing Triggers'
+    group by 1
 ),
 with_mr as (
-    select amt, abs(amt - lag(amt) over (order by record_month)) as mr from monthly
+    select amt, abs(amt - lag(amt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma from with_mr
+    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select 'UCL (3σ)' as label, round(mean_val + 3 * sigma, 0) as value from stats
-union all select 'Mean', round(mean_val, 0) from stats
-union all select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
+select round(mean_val + 3 * sigma, 0) as ref_val, 'UCL' as ref_label from stats
+union all
+select round(mean_val, 0), 'Mean' from stats
+union all
+select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
 ```
 
 {% line_chart
     data="control_transaction_dollars"
     x="record_month"
-    y="Monthly Dollars"
+    y="monthly_dollars"
     y_fmt="usd0"
     title="Transaction Timing Triggers -- Dollar Volume Control Chart (XmR)"
-    chart_options={ color_palette = ["#FF800E"] }
+    chart_options={
+        color_palette = ["#FF800E"]
+    }
 %}
-    {% reference_line data="control_transaction_dollars_limits" y="value" label="label" color="#595959"
-        line_options={ type="dashed" width=1 } /%}
+    {% reference_line
+        data="control_transaction_dollars_limits"
+        y="ref_val"
+        label="ref_label"
+        color="#595959"
+        line_options={
+            type = "dashed"
+            width = 1
+        }
+    /%}
 {% /line_chart %}
 
 ### Owner Pressure Signals
@@ -757,93 +788,131 @@ with monthly as (
     group by 1
 ),
 with_mr as (
-    select record_month, cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr
+    select record_month, cnt,
+        abs(cnt - lag(cnt) over (order by record_month)) as mr
     from monthly
 ),
 stats as (
-    select round(avg(cnt), 1) as mean_val, round(avg(mr) / 1.128, 1) as sigma
+    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma
     from with_mr
 )
-select m.record_month, m.cnt as "Monthly Count", s.mean_val as "Mean",
-    round(s.mean_val + 3 * s.sigma, 0) as "UCL",
-    greatest(0, round(s.mean_val - 3 * s.sigma, 0)) as "LCL"
-from monthly m cross join stats s
+select
+    m.record_month,
+    m.cnt as monthly_count
+from monthly m
 order by m.record_month
 ```
 
 ```sql control_pressure_volume_limits
 with monthly as (
     select record_month, sum(current_month_count) as cnt
-    from gold_signal_velocity_trends where subcategory = 'Owner Pressure Signals' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Owner Pressure Signals'
+    group by 1
 ),
 with_mr as (
-    select cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr from monthly
+    select cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma from with_mr
+    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select 'UCL (3σ)' as label, round(mean_val + 3 * sigma, 0) as value from stats
-union all select 'Mean', round(mean_val, 0) from stats
-union all select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
+select round(mean_val + 3 * sigma, 0) as ref_val, 'UCL' as ref_label from stats
+union all
+select round(mean_val, 0), 'Mean' from stats
+union all
+select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
 ```
 
 {% line_chart
     data="control_pressure_volume"
     x="record_month"
-    y="Monthly Count"
+    y="monthly_count"
     y_fmt="num0"
     title="Owner Pressure -- Volume Control Chart (XmR)"
     subtitle="Breakout above UCL = statistically significant increase in financial distress signals"
-    chart_options={ color_palette = ["#006BA4"] }
+    chart_options={
+        color_palette = ["#006BA4"]
+    }
 %}
-    {% reference_line data="control_pressure_volume_limits" y="value" label="label" color="#595959"
-        line_options={ type="dashed" width=1 } /%}
+    {% reference_line
+        data="control_pressure_volume_limits"
+        y="ref_val"
+        label="ref_label"
+        color="#595959"
+        line_options={
+            type = "dashed"
+            width = 1
+        }
+    /%}
 {% /line_chart %}
 
 ```sql control_pressure_dollars
 with monthly as (
     select record_month, sum(current_month_amount) as amt
-    from gold_signal_velocity_trends where subcategory = 'Owner Pressure Signals' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Owner Pressure Signals'
+    group by 1
 ),
 with_mr as (
-    select record_month, amt, abs(amt - lag(amt) over (order by record_month)) as mr from monthly
+    select record_month, amt,
+        abs(amt - lag(amt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select round(avg(amt), 0) as mean_val, round(avg(mr) / 1.128, 0) as sigma from with_mr
+    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select m.record_month, m.amt as "Monthly Dollars", s.mean_val as "Mean",
-    round(s.mean_val + 3 * s.sigma, 0) as "UCL",
-    greatest(0, round(s.mean_val - 3 * s.sigma, 0)) as "LCL"
-from monthly m cross join stats s
+select
+    m.record_month,
+    m.amt as monthly_dollars
+from monthly m
 order by m.record_month
 ```
 
 ```sql control_pressure_dollars_limits
 with monthly as (
     select record_month, sum(current_month_amount) as amt
-    from gold_signal_velocity_trends where subcategory = 'Owner Pressure Signals' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Owner Pressure Signals'
+    group by 1
 ),
 with_mr as (
-    select amt, abs(amt - lag(amt) over (order by record_month)) as mr from monthly
+    select amt, abs(amt - lag(amt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma from with_mr
+    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select 'UCL (3σ)' as label, round(mean_val + 3 * sigma, 0) as value from stats
-union all select 'Mean', round(mean_val, 0) from stats
-union all select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
+select round(mean_val + 3 * sigma, 0) as ref_val, 'UCL' as ref_label from stats
+union all
+select round(mean_val, 0), 'Mean' from stats
+union all
+select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
 ```
 
 {% line_chart
     data="control_pressure_dollars"
     x="record_month"
-    y="Monthly Dollars"
+    y="monthly_dollars"
     y_fmt="usd0"
     title="Owner Pressure -- Dollar Volume Control Chart (XmR)"
-    chart_options={ color_palette = ["#FF800E"] }
+    chart_options={
+        color_palette = ["#FF800E"]
+    }
 %}
-    {% reference_line data="control_pressure_dollars_limits" y="value" label="label" color="#595959"
-        line_options={ type="dashed" width=1 } /%}
+    {% reference_line
+        data="control_pressure_dollars_limits"
+        y="ref_val"
+        label="ref_label"
+        color="#595959"
+        line_options={
+            type = "dashed"
+            width = 1
+        }
+    /%}
 {% /line_chart %}
 
 ### Equity Unlock Signals
@@ -858,93 +927,131 @@ with monthly as (
     group by 1
 ),
 with_mr as (
-    select record_month, cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr
+    select record_month, cnt,
+        abs(cnt - lag(cnt) over (order by record_month)) as mr
     from monthly
 ),
 stats as (
-    select round(avg(cnt), 1) as mean_val, round(avg(mr) / 1.128, 1) as sigma
+    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma
     from with_mr
 )
-select m.record_month, m.cnt as "Monthly Count", s.mean_val as "Mean",
-    round(s.mean_val + 3 * s.sigma, 0) as "UCL",
-    greatest(0, round(s.mean_val - 3 * s.sigma, 0)) as "LCL"
-from monthly m cross join stats s
+select
+    m.record_month,
+    m.cnt as monthly_count
+from monthly m
 order by m.record_month
 ```
 
 ```sql control_equity_volume_limits
 with monthly as (
     select record_month, sum(current_month_count) as cnt
-    from gold_signal_velocity_trends where subcategory = 'Equity Unlock Signals' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Equity Unlock Signals'
+    group by 1
 ),
 with_mr as (
-    select cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr from monthly
+    select cnt, abs(cnt - lag(cnt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma from with_mr
+    select avg(cnt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select 'UCL (3σ)' as label, round(mean_val + 3 * sigma, 0) as value from stats
-union all select 'Mean', round(mean_val, 0) from stats
-union all select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
+select round(mean_val + 3 * sigma, 0) as ref_val, 'UCL' as ref_label from stats
+union all
+select round(mean_val, 0), 'Mean' from stats
+union all
+select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
 ```
 
 {% line_chart
     data="control_equity_volume"
     x="record_month"
-    y="Monthly Count"
+    y="monthly_count"
     y_fmt="num0"
     title="Equity Unlock -- Volume Control Chart (XmR)"
     subtitle="Breakout above UCL = abnormal rate of borrower departures"
-    chart_options={ color_palette = ["#006BA4"] }
+    chart_options={
+        color_palette = ["#006BA4"]
+    }
 %}
-    {% reference_line data="control_equity_volume_limits" y="value" label="label" color="#595959"
-        line_options={ type="dashed" width=1 } /%}
+    {% reference_line
+        data="control_equity_volume_limits"
+        y="ref_val"
+        label="ref_label"
+        color="#595959"
+        line_options={
+            type = "dashed"
+            width = 1
+        }
+    /%}
 {% /line_chart %}
 
 ```sql control_equity_dollars
 with monthly as (
     select record_month, sum(current_month_amount) as amt
-    from gold_signal_velocity_trends where subcategory = 'Equity Unlock Signals' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Equity Unlock Signals'
+    group by 1
 ),
 with_mr as (
-    select record_month, amt, abs(amt - lag(amt) over (order by record_month)) as mr from monthly
+    select record_month, amt,
+        abs(amt - lag(amt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select round(avg(amt), 0) as mean_val, round(avg(mr) / 1.128, 0) as sigma from with_mr
+    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select m.record_month, m.amt as "Monthly Dollars", s.mean_val as "Mean",
-    round(s.mean_val + 3 * s.sigma, 0) as "UCL",
-    greatest(0, round(s.mean_val - 3 * s.sigma, 0)) as "LCL"
-from monthly m cross join stats s
+select
+    m.record_month,
+    m.amt as monthly_dollars
+from monthly m
 order by m.record_month
 ```
 
 ```sql control_equity_dollars_limits
 with monthly as (
     select record_month, sum(current_month_amount) as amt
-    from gold_signal_velocity_trends where subcategory = 'Equity Unlock Signals' group by 1
+    from gold_signal_velocity_trends
+    where subcategory = 'Equity Unlock Signals'
+    group by 1
 ),
 with_mr as (
-    select amt, abs(amt - lag(amt) over (order by record_month)) as mr from monthly
+    select amt, abs(amt - lag(amt) over (order by record_month)) as mr
+    from monthly
 ),
 stats as (
-    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma from with_mr
+    select avg(amt) as mean_val, avg(mr) / 1.128 as sigma
+    from with_mr
 )
-select 'UCL (3σ)' as label, round(mean_val + 3 * sigma, 0) as value from stats
-union all select 'Mean', round(mean_val, 0) from stats
-union all select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from stats
+select round(mean_val + 3 * sigma, 0) as ref_val, 'UCL' as ref_label from stats
+union all
+select round(mean_val, 0), 'Mean' from stats
+union all
+select greatest(0, round(mean_val - 3 * sigma, 0)), 'LCL' from stats
 ```
 
 {% line_chart
     data="control_equity_dollars"
     x="record_month"
-    y="Monthly Dollars"
+    y="monthly_dollars"
     y_fmt="usd0"
     title="Equity Unlock -- Dollar Volume Control Chart (XmR)"
-    chart_options={ color_palette = ["#FF800E"] }
+    chart_options={
+        color_palette = ["#FF800E"]
+    }
 %}
-    {% reference_line data="control_equity_dollars_limits" y="value" label="label" color="#595959"
-        line_options={ type="dashed" width=1 } /%}
+    {% reference_line
+        data="control_equity_dollars_limits"
+        y="ref_val"
+        label="ref_label"
+        color="#595959"
+        line_options={
+            type = "dashed"
+            width = 1
+        }
+    /%}
 {% /line_chart %}
 
 ---
@@ -954,9 +1061,9 @@ union all select 'LCL (3σ)', greatest(0, round(mean_val - 3 * sigma, 0)) from s
 **XmR (Individuals and Moving Range)** -- Each monthly value is an individual observation. The moving range is the absolute difference between consecutive months. Control limits are calculated as:
 
 - **Center line (Mean):** Average of all monthly values
-- **σ estimate:** Average moving range ÷ 1.128 (the d₂ constant for subgroup size 2)
-- **UCL:** Mean + 3σ
-- **LCL:** Mean - 3σ (floored at zero)
+- **Sigma estimate:** Average moving range / 1.128 (the d2 constant for subgroup size 2)
+- **UCL:** Mean + 3 sigma
+- **LCL:** Mean - 3 sigma (floored at zero)
 
 XmR is appropriate here because each month is a single observation with no subgrouping. A point outside the control limits has less than a 0.27% chance of occurring under stable conditions -- it represents a genuine process shift, not random variation.
 
