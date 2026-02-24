@@ -16,7 +16,15 @@ Category-to-category transitions show the broadest patterns. Each node is one of
 
 ### Property Lifecycle
 
-```sql l1_prop
+```sql l1_prop_sankey
+select
+  '1 - ' || source_category as source_category,
+  '2 - ' || target_category as target_category,
+  transition_count
+from silver_instrument_transitions_property
+```
+
+```sql l1_prop_table
 select
   source_category,
   target_category,
@@ -29,18 +37,26 @@ order by transition_count desc
 ```
 
 {% sankey_chart
-    data="l1_prop"
+    data="l1_prop_sankey"
     source="source_category"
     target="target_category"
     value="sum(transition_count)"
     title="Property: Category-to-Category Flows"
 /%}
 
-{% table data="l1_prop" page_size=200 /%}
+{% table data="l1_prop_table" page_size=200 /%}
 
 ### Party Lifecycle
 
-```sql l1_party
+```sql l1_party_sankey
+select
+  '1 - ' || source_category as source_category,
+  '2 - ' || target_category as target_category,
+  transition_count
+from silver_instrument_transitions_party
+```
+
+```sql l1_party_table
 select
   source_category,
   target_category,
@@ -53,18 +69,26 @@ order by transition_count desc
 ```
 
 {% sankey_chart
-    data="l1_party"
+    data="l1_party_sankey"
     source="source_category"
     target="target_category"
     value="sum(transition_count)"
     title="Party: Category-to-Category Flows"
 /%}
 
-{% table data="l1_party" page_size=200 /%}
+{% table data="l1_party_table" page_size=200 /%}
 
 ### Combined (Property + Party)
 
-```sql l1_combined
+```sql l1_comb_sankey
+select
+  '1 - ' || source_category as source_category,
+  '2 - ' || target_category as target_category,
+  transition_count
+from silver_instrument_transitions_combined
+```
+
+```sql l1_comb_table
 select
   source_category,
   target_category,
@@ -77,14 +101,14 @@ order by transition_count desc
 ```
 
 {% sankey_chart
-    data="l1_combined"
+    data="l1_comb_sankey"
     source="source_category"
     target="target_category"
     value="sum(transition_count)"
     title="Combined: Category-to-Category Flows"
 /%}
 
-{% table data="l1_combined" page_size=200 /%}
+{% table data="l1_comb_table" page_size=200 /%}
 
 ## Level 2: Subcategory Flows
 
@@ -92,7 +116,15 @@ Subcategory-to-subcategory transitions reveal the signal families driving lifecy
 
 ### Property Lifecycle
 
-```sql l2_prop
+```sql l2_prop_sankey
+select
+  '1 - ' || source_subcategory as source_subcategory,
+  '2 - ' || target_subcategory as target_subcategory,
+  transition_count
+from silver_instrument_transitions_property
+```
+
+```sql l2_prop_table
 select
   source_subcategory,
   target_subcategory,
@@ -105,18 +137,26 @@ order by transition_count desc
 ```
 
 {% sankey_chart
-    data="l2_prop"
+    data="l2_prop_sankey"
     source="source_subcategory"
     target="target_subcategory"
     value="sum(transition_count)"
     title="Property: Subcategory-to-Subcategory Flows"
 /%}
 
-{% table data="l2_prop" page_size=200 /%}
+{% table data="l2_prop_table" page_size=200 /%}
 
 ### Party Lifecycle
 
-```sql l2_party
+```sql l2_party_sankey
+select
+  '1 - ' || source_subcategory as source_subcategory,
+  '2 - ' || target_subcategory as target_subcategory,
+  transition_count
+from silver_instrument_transitions_party
+```
+
+```sql l2_party_table
 select
   source_subcategory,
   target_subcategory,
@@ -129,18 +169,26 @@ order by transition_count desc
 ```
 
 {% sankey_chart
-    data="l2_party"
+    data="l2_party_sankey"
     source="source_subcategory"
     target="target_subcategory"
     value="sum(transition_count)"
     title="Party: Subcategory-to-Subcategory Flows"
 /%}
 
-{% table data="l2_party" page_size=200 /%}
+{% table data="l2_party_table" page_size=200 /%}
 
 ### Combined (Property + Party)
 
-```sql l2_combined
+```sql l2_comb_sankey
+select
+  '1 - ' || source_subcategory as source_subcategory,
+  '2 - ' || target_subcategory as target_subcategory,
+  transition_count
+from silver_instrument_transitions_combined
+```
+
+```sql l2_comb_table
 select
   source_subcategory,
   target_subcategory,
@@ -153,14 +201,14 @@ order by transition_count desc
 ```
 
 {% sankey_chart
-    data="l2_combined"
+    data="l2_comb_sankey"
     source="source_subcategory"
     target="target_subcategory"
     value="sum(transition_count)"
     title="Combined: Subcategory-to-Subcategory Flows"
 /%}
 
-{% table data="l2_combined" page_size=200 /%}
+{% table data="l2_comb_table" page_size=200 /%}
 
 ## Level 3: Instrument-Level Transitions by Subcategory
 
@@ -173,8 +221,6 @@ Instruments signaling ownership transfers, sales, and conveyances--the core tran
 ```sql ttt_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -230,8 +276,6 @@ Debt structure instruments: mortgages, modifications, subordinations, promissory
 ```sql cli_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -287,8 +331,6 @@ Instruments affecting title clarity: affidavits, amendments, powers of attorney,
 ```sql toc_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -344,8 +386,6 @@ Release and satisfaction instruments: releases of mortgage, satisfactions, disch
 ```sql eus_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -401,8 +441,6 @@ Probate, divorce, death filings, guardianship, distribution orders. Life events 
 ```sql llt_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -458,8 +496,6 @@ Certificate of Title recordings--the foundation document linking instruments to 
 ```sql tr_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -515,8 +551,6 @@ Assignment and lease instruments that add complexity to the deal chain.
 ```sql dce_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -572,8 +606,6 @@ Foreclosure, power of sale, and judicial sale instruments. High-distress indicat
 ```sql fss_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -629,8 +661,6 @@ Tax liens, judgments, notices of default, lis pendens. Signals of financial dist
 ```sql ops_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -686,8 +716,6 @@ Permits, designations, assessments, and other administrative recordings.
 ```sql adm_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -743,8 +771,6 @@ Cancellations, terminations, and satisfaction of liens. Instruments that clear e
 ```sql bcs_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -800,8 +826,6 @@ Maps, subdivisions, and construction-related instruments signaling new inventory
 ```sql ss_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -857,8 +881,6 @@ Regulatory filings, environmental liens, and risk-related instruments.
 ```sql rrci_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -914,8 +936,6 @@ Rescissions and amendments--instruments that signal active deal negotiation or m
 ```sql dpe_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
@@ -971,8 +991,6 @@ Lien instruments that create encumbrances against property. Smallest subcategory
 ```sql le_prop
 select
   source_display_name || ' -> ' || target_display_name as transition,
-  source_display_name,
-  target_display_name,
   transition_count,
   round(median_days_between, 1) as median_days,
   round(avg_days_between, 0) as avg_days
