@@ -254,34 +254,34 @@ prev as (
 )
 select
     'Total Signals' as metric,
-    (select sum(cnt) from curr where category != 'Metadata') as current_month,
-    (select sum(cnt) from prev where category != 'Metadata') as prior_month,
-    (select sum(cnt) from curr where category != 'Metadata')
-    - (select sum(cnt) from prev where category != 'Metadata') as delta
+    (select sum(cnt)::double from curr where category != 'Metadata') as current_month,
+    (select sum(cnt)::double from prev where category != 'Metadata') as prior_month,
+    (select sum(cnt)::double from curr where category != 'Metadata')
+    - (select sum(cnt)::double from prev where category != 'Metadata') as delta
 
 union all
 
 select 'Owner Pressure',
-    (select sum(cnt) from curr where subcategory = 'Owner Pressure Signals'),
-    (select sum(cnt) from prev where subcategory = 'Owner Pressure Signals'),
-    (select sum(cnt) from curr where subcategory = 'Owner Pressure Signals')
-    - (select sum(cnt) from prev where subcategory = 'Owner Pressure Signals')
+    (select sum(cnt)::double from curr where subcategory = 'Owner Pressure Signals'),
+    (select sum(cnt)::double from prev where subcategory = 'Owner Pressure Signals'),
+    (select sum(cnt)::double from curr where subcategory = 'Owner Pressure Signals')
+    - (select sum(cnt)::double from prev where subcategory = 'Owner Pressure Signals')
 
 union all
 
 select 'Equity Unlocks',
-    (select sum(cnt) from curr where subcategory = 'Equity Unlock Signals'),
-    (select sum(cnt) from prev where subcategory = 'Equity Unlock Signals'),
-    (select sum(cnt) from curr where subcategory = 'Equity Unlock Signals')
-    - (select sum(cnt) from prev where subcategory = 'Equity Unlock Signals')
+    (select sum(cnt)::double from curr where subcategory = 'Equity Unlock Signals'),
+    (select sum(cnt)::double from prev where subcategory = 'Equity Unlock Signals'),
+    (select sum(cnt)::double from curr where subcategory = 'Equity Unlock Signals')
+    - (select sum(cnt)::double from prev where subcategory = 'Equity Unlock Signals')
 
 union all
 
 select 'Capital & Leverage Volume ($)',
-    (select sum(amt) from curr where category = 'Capital & Leverage Intelligence'),
-    (select sum(amt) from prev where category = 'Capital & Leverage Intelligence'),
-    (select sum(amt) from curr where category = 'Capital & Leverage Intelligence')
-    - (select sum(amt) from prev where category = 'Capital & Leverage Intelligence')
+    (select sum(amt)::double from curr where category = 'Capital & Leverage Intelligence'),
+    (select sum(amt)::double from prev where category = 'Capital & Leverage Intelligence'),
+    (select sum(amt)::double from curr where category = 'Capital & Leverage Intelligence')
+    - (select sum(amt)::double from prev where category = 'Capital & Leverage Intelligence')
 ```
 
 {% table data="period_comparison" /%}
@@ -451,62 +451,38 @@ order by c.cnt desc
 Is this year on track? This chart compares the current year's annualized pace (year-to-date count divided by months elapsed, multiplied by 12) against last year's full-year total for each category.
 
 ```sql ytd_pace
-with current_yr as (
-    select
-        category,
-        sum(instrument_count) as ytd_count
+with months_so_far as (
+    select count(distinct record_month) as n
+    from gold_signal_velocity_trends
+    where record_month >= date_trunc('year', (select max(record_month) from gold_signal_velocity_trends))
+),
+current_ytd as (
+    select category, sum(instrument_count)::double as ytd_count
     from gold_yearly_instrument_summary
     where recorded_year = (select max(recorded_year) from gold_yearly_instrument_summary)
       and category != 'Metadata'
     group by 1
 ),
-prior_yr as (
-    select
-        category,
-        sum(instrument_count) as full_year_count
-    from gold_yearly_instrument_summary
-    where recorded_year = (select max(recorded_year) - 1 from gold_yearly_instrument_summary)
-      and category != 'Metadata'
-    group by 1
-),
-months_elapsed as (
-    select count(distinct record_month) as months_so_far
+prior_ytd as (
+    select category, sum(current_month_count)::double as prior_ytd_count
     from gold_signal_velocity_trends
-    where record_month >= date_trunc('year', (select max(record_month) from gold_signal_velocity_trends))
+    where category != 'Metadata'
+      and record_month >= date_trunc('year', (select max(record_month) from gold_signal_velocity_trends) - interval '1' year)
+      and month(record_month) <= (select max(month(record_month)) from gold_signal_velocity_trends
+          where record_month >= date_trunc('year', (select max(record_month) from gold_signal_velocity_trends)))
+    group by 1
 )
 select
     c.category,
-    'Annualized YTD Pace' as measure,
-    round(c.ytd_count * 12.0 / nullif(m.months_so_far, 0), 0) as instrument_count
-from current_yr c
-cross join months_elapsed m
-
-union all
-
-select
-    p.category,
-    'Prior Year Total',
-    p.full_year_count
-from prior_yr p
-
-order by 2, instrument_count desc
+    c.ytd_count as current_ytd,
+    p.prior_ytd_count as prior_year_same_period,
+    c.ytd_count - p.prior_ytd_count as delta,
+    round(100.0 * (c.ytd_count - p.prior_ytd_count) / nullif(p.prior_ytd_count, 0), 1) as pct_change
+from current_ytd c
+left join prior_ytd p on c.category = p.category
+order by c.ytd_count desc
 ```
 
-{% bar_chart
-    data="ytd_pace"
-    x="category"
-    y="instrument_count"
-    series="measure"
-    y_fmt="num0"
-    title="Annualized YTD Pace vs Prior Year Total"
-    subtitle="Side-by-side comparison. Is each category accelerating or decelerating year over year?"
-    chart_options={
-        series_colors = {
-            "Annualized YTD Pace" = "#006BA4"
-            "Prior Year Total" = "#FFBC79"
-        }
-    }
-/%}
 
 {% table data="ytd_pace" /%}
 
