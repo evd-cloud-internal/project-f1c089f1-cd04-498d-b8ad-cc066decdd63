@@ -37,11 +37,12 @@ FROM audit_signal_category_coverage
 ```sql classification_pct
 -- Percentage of instruments mapped to a signal family
 -- Source: audit.signal_category_coverage, filtered to MAPPED status
+-- Divided by 100 so Evidence pct1 format renders "97.0%"
 SELECT
     ROUND(
-        SUM(CASE WHEN mapping_status = 'MAPPED' THEN instrument_count ELSE 0 END) * 100.0
+        SUM(CASE WHEN mapping_status = 'MAPPED' THEN instrument_count ELSE 0 END) * 1.0
         / SUM(instrument_count),
-        1
+        3
     ) AS value
 FROM audit_signal_category_coverage
 ```
@@ -61,7 +62,7 @@ FROM audit_mortgage_eligibility_flags
 ```
 
 {% big_value data="total_instruments" value="value" title="Total Instruments" fmt="num0k" /%}
-{% big_value data="classification_pct" value="value" title="Classification Coverage" fmt="num1" /%}
+{% big_value data="classification_pct" value="value" title="Classification Coverage" fmt="pct1" /%}
 {% big_value data="linked_properties" value="value" title="Property-Linked Instruments" fmt="num0k" /%}
 {% big_value data="active_mortgages" value="value" title="Active Mortgages" fmt="num0k" /%}
 
@@ -193,7 +194,7 @@ evaluation_values AS (
 SELECT
     evaluation_values.category,
     evaluation_values.subcategory,
-    evaluation_values.eval_month,
+    CAST(evaluation_values.eval_month AS VARCHAR) AS eval_month,
     evaluation_values.eval_count,
     ROUND(control_limits.mean_count, 0) AS mean_count,
     ROUND(control_limits.ucl, 0) AS upper_limit,
@@ -209,7 +210,16 @@ WHERE evaluation_values.eval_count > control_limits.ucl
 ORDER BY ABS(evaluation_values.eval_count - control_limits.mean_count) DESC
 ```
 
-{% table data="attention_now" page_size=200 /%}
+{% table data="attention_now" page_size=200 %}
+    {% dimension value="category" /%}
+    {% dimension value="subcategory" /%}
+    {% dimension value="eval_month" /%}
+    {% measure value="eval_count" title="Eval Count" fmt="num0" /%}
+    {% measure value="mean_count" title="Mean" fmt="num0" /%}
+    {% measure value="upper_limit" title="UCL" fmt="num0" /%}
+    {% measure value="lower_limit" title="LCL" fmt="num0" /%}
+    {% dimension value="signal_status" title="Status" /%}
+{% /table %}
 
 > **So what?**  
 - Empty table = every subcategory is within its historical range.  
@@ -219,60 +229,112 @@ ORDER BY ABS(evaluation_values.eval_count - control_limits.mean_count) DESC
 
 ---
 
-## Latest Month at a Glance
+## Last Complete Month
 
-```sql latest_month_kpis
--- Most recent month: total volume and dollar value across all analytical categories
--- Source: gold.signal_velocity_trends, most recent record_month
--- Note: most recent month may be partial depending on recording lag
-SELECT
-    record_month,
-    SUM(current_month_count) AS total_count,
-    SUM(current_month_amount) AS total_amount,
-    SUM(prior_month_count) AS prior_count,
-    SUM(prior_month_amount) AS prior_amount
+```sql eval_month_label
+-- Identify the last complete month for display
+-- Source: gold.signal_velocity_trends
+-- Offset 1 skips the current partial month
+SELECT DISTINCT record_month AS eval_month
 FROM gold_signal_velocity_trends
-WHERE category != 'Metadata'
-  AND record_month = (SELECT MAX(record_month) FROM gold_signal_velocity_trends)
-GROUP BY record_month
+ORDER BY record_month DESC
+LIMIT 1 OFFSET 1
 ```
 
-{% big_value data="latest_month_kpis" value="total_count" title="Instruments This Month" fmt="num0" /%}
-{% big_value data="latest_month_kpis" value="total_amount" title="Dollar Volume This Month" fmt="usd0m" /%}
-{% big_value data="latest_month_kpis" value="prior_count" title="Prior Month Instruments" fmt="num0" /%}
-{% big_value data="latest_month_kpis" value="prior_amount" title="Prior Month Dollars" fmt="usd0m" /%}
+```sql latest_month_kpis
+-- Last complete month: total volume and dollar value across all analytical categories
+-- Source: gold.signal_velocity_trends
+-- Uses second-most-recent month (offset 1) to avoid partial-month distortion
+-- Prior month = the month before that (offset 2) for clean comparison
+-- Excludes Metadata
+WITH eval AS (
+    SELECT DISTINCT record_month
+    FROM gold_signal_velocity_trends
+    ORDER BY record_month DESC
+    LIMIT 1 OFFSET 1
+),
+prior AS (
+    SELECT DISTINCT record_month
+    FROM gold_signal_velocity_trends
+    ORDER BY record_month DESC
+    LIMIT 1 OFFSET 2
+)
+SELECT
+    SUM(CASE WHEN record_month = (SELECT record_month FROM eval)
+        THEN current_month_count ELSE 0 END) AS eval_count,
+    SUM(CASE WHEN record_month = (SELECT record_month FROM eval)
+        THEN current_month_amount ELSE 0 END) AS eval_amount,
+    SUM(CASE WHEN record_month = (SELECT record_month FROM prior)
+        THEN current_month_count ELSE 0 END) AS prior_count,
+    SUM(CASE WHEN record_month = (SELECT record_month FROM prior)
+        THEN current_month_amount ELSE 0 END) AS prior_amount,
+    SUM(CASE WHEN record_month = (SELECT record_month FROM eval)
+        THEN current_month_count ELSE 0 END)
+    - SUM(CASE WHEN record_month = (SELECT record_month FROM prior)
+        THEN current_month_count ELSE 0 END) AS count_delta,
+    SUM(CASE WHEN record_month = (SELECT record_month FROM eval)
+        THEN current_month_amount ELSE 0 END)
+    - SUM(CASE WHEN record_month = (SELECT record_month FROM prior)
+        THEN current_month_amount ELSE 0 END) AS amount_delta
+FROM gold_signal_velocity_trends
+WHERE category != 'Metadata'
+  AND record_month IN (
+    (SELECT record_month FROM eval),
+    (SELECT record_month FROM prior)
+  )
+```
+
+{% big_value data="latest_month_kpis" value="eval_count" title="Instruments" fmt="num0" /%}
+{% big_value data="latest_month_kpis" value="eval_amount" title="Dollar Volume" fmt="usd0m" /%}
+{% big_value data="latest_month_kpis" value="count_delta" title="Count vs Prior Month" fmt="num0" /%}
+{% big_value data="latest_month_kpis" value="amount_delta" title="Dollars vs Prior Month" fmt="usd0m" /%}
 
 > **Why this matters:**  
-- The most recent month is the freshest signal. Compare it to the prior month to see if activity is accelerating, decelerating, or holding steady.  
+- These numbers reflect the most recent complete month, not the current partial month.  
 - Sharp drop in dollar volume with stable instrument count? Smaller transactions replacing larger ones.  
 - Spike in instrument count with flat dollar volume? Administrative filings, not economic activity.  
-- The most recent month may be partial depending on DLM recording lag; check data quality for freshness.
+- Positive delta = activity expanding. Negative delta = activity contracting. Check the category breakdown below for what moved.
 
 ---
 
 ## Month-over-Month by Subcategory
 
-Sorted by largest absolute change. Signals where to look deeper.
+Sorted by largest absolute change in the most recent complete month. Signals where to look deeper.
 
 ```sql mom_by_subcategory
--- Month-over-month volume change per subcategory, most recent month
+-- Month-over-month volume change per subcategory, last complete month
 -- Source: gold.signal_velocity_trends
 -- Subcategory values are dim-driven (source: dim.signal_category INSERTs in 01_dimensions)
+-- Uses second-most-recent month (offset 1) to avoid partial-month distortion
+-- pct_change divided by 100 for Evidence pct1 format rendering
 -- Sorted by absolute change descending to surface biggest movers
+WITH eval AS (
+    SELECT DISTINCT record_month
+    FROM gold_signal_velocity_trends
+    ORDER BY record_month DESC
+    LIMIT 1 OFFSET 1
+)
 SELECT
     category,
     subcategory,
     current_month_count,
     prior_month_count,
     current_month_count - prior_month_count AS volume_change,
-    ROUND(mom_pct_change, 1) AS pct_change
+    ROUND(mom_pct_change / 100.0, 3) AS pct_change
 FROM gold_signal_velocity_trends
 WHERE category != 'Metadata'
-  AND record_month = (SELECT MAX(record_month) FROM gold_signal_velocity_trends)
+  AND record_month = (SELECT record_month FROM eval)
 ORDER BY ABS(current_month_count - prior_month_count) DESC
 ```
 
-{% table data="mom_by_subcategory" page_size=200 /%}
+{% table data="mom_by_subcategory" page_size=200 %}
+    {% dimension value="category" /%}
+    {% dimension value="subcategory" /%}
+    {% measure value="current_month_count" title="Current" fmt="num0" /%}
+    {% measure value="prior_month_count" title="Prior" fmt="num0" /%}
+    {% measure value="volume_change" title="Change" fmt="num0" /%}
+    {% measure value="pct_change" title="% Change" fmt="pct1" /%}
+{% /table %}
 
 > **So what?**  
 - The top row had the biggest absolute volume swing.  
@@ -361,14 +423,20 @@ ORDER BY record_month, subcategory
 
 ## Market Pulse
 
-Category-level summary for the most recent month. Each category answers a different lending question.
+Category-level summary for the most recent complete month. Each category answers a different lending question.
 
 ```sql market_pulse
 -- Category-level summary with five-questions framework
--- Source: gold.signal_velocity_trends, most recent month
+-- Source: gold.signal_velocity_trends, last complete month (offset 1)
 -- Category literals verified: 01_dimensions lines 174, 202, 212, 224, 335
 -- Question mappings from dashboard architecture plan v2, lines 43-49
 -- Excludes Metadata (administrative filings with no signal value)
+WITH eval AS (
+    SELECT DISTINCT record_month
+    FROM gold_signal_velocity_trends
+    ORDER BY record_month DESC
+    LIMIT 1 OFFSET 1
+)
 SELECT
     category,
     CASE category
@@ -383,15 +451,21 @@ SELECT
     SUM(current_month_count) - SUM(prior_month_count) AS delta
 FROM gold_signal_velocity_trends
 WHERE category != 'Metadata'
-  AND record_month = (SELECT MAX(record_month) FROM gold_signal_velocity_trends)
+  AND record_month = (SELECT record_month FROM eval)
 GROUP BY category
 ORDER BY SUM(current_month_count) DESC
 ```
 
-{% table data="market_pulse" page_size=200 /%}
+{% table data="market_pulse" page_size=200 %}
+    {% dimension value="category" /%}
+    {% dimension value="question" /%}
+    {% measure value="current_count" title="Current" fmt="num0" /%}
+    {% measure value="prior_count" title="Prior" fmt="num0" /%}
+    {% measure value="delta" title="Delta" fmt="num0" /%}
+{% /table %}
 
 > **So what?**  
-- Each row is a different dimension of the lending market. The delta column shows expansion or contraction relative to last month.  
+- Each row is a different dimension of the lending market. The delta column shows expansion or contraction relative to the month before.  
 - Which categories are growing? Which are shrinking?  
 - Do all five tell a coherent story, or are some moving in unexpected directions?  
 - The category pages provide subcategory-level detail behind each row.
@@ -406,12 +480,13 @@ Apples-to-apples comparison of year-to-date instrument volume across recent year
 -- Year-over-year instrument volume and dollar totals
 -- Source: gold.yearly_instrument_summary
 -- Excludes Metadata category
+-- Cast year to string so Evidence renders it as a category axis, not numeric
 -- Note: current year is partial (check data quality section for most recent recording date)
 SELECT
-    recorded_year,
+    CAST(recorded_year AS VARCHAR) AS recorded_year,
     SUM(instrument_count) AS total_instruments,
     SUM(total_amount) AS total_dollars,
-    ROUND(SUM(total_amount) / 1000000, 1) AS dollars_millions
+    ROUND(SUM(total_amount) / 1000000.0, 1) AS dollars_millions
 FROM gold_yearly_instrument_summary
 WHERE category != 'Metadata'
   AND recorded_year >= 2022
@@ -425,10 +500,14 @@ ORDER BY recorded_year
     y="total_instruments"
     title="Annual Instrument Volume"
     y_fmt="num0"
-    x_fmt="id"
 /%}
 
-{% table data="ytd_pace" page_size=200 /%}
+{% table data="ytd_pace" page_size=200 %}
+    {% dimension value="recorded_year" title="Year" /%}
+    {% measure value="total_instruments" title="Total Instruments" fmt="num0" /%}
+    {% measure value="total_dollars" title="Total Dollars" fmt="usd0m" /%}
+    {% measure value="dollars_millions" title="Dollars (M)" fmt="num1" /%}
+{% /table %}
 
 > **So what?**  
 - The most recent year is partial. Compare it to the same calendar window in prior years before drawing conclusions.  
@@ -447,6 +526,7 @@ Which subcategories drive the majority of recorded activity? Pareto analysis sho
 -- Source: gold.signal_velocity_trends
 -- Window: trailing 12 months (12 most recent record_month values)
 -- Excludes Metadata
+-- Percentages as 0-1 decimals for Evidence pct1 format
 WITH trailing_twelve AS (
     SELECT DISTINCT record_month
     FROM gold_signal_velocity_trends
@@ -468,16 +548,16 @@ with_cumulative AS (
     SELECT
         subcategory,
         volume,
-        ROUND(volume * 100.0 / SUM(volume) OVER (), 1) AS pct_of_total,
-        ROUND(SUM(volume) OVER (ORDER BY volume DESC) * 100.0 / SUM(volume) OVER (), 1) AS cumulative_pct
+        volume * 1.0 / SUM(volume) OVER () AS pct_of_total,
+        SUM(volume) OVER (ORDER BY volume DESC) * 1.0 / SUM(volume) OVER () AS cumulative_pct
     FROM subcategory_totals
 )
 
 SELECT
     subcategory,
     volume,
-    pct_of_total,
-    cumulative_pct
+    ROUND(pct_of_total, 3) AS pct_of_total,
+    ROUND(cumulative_pct, 3) AS cumulative_pct
 FROM with_cumulative
 ORDER BY volume DESC
 ```
@@ -494,8 +574,8 @@ ORDER BY volume DESC
 {% table data="signal_concentration" page_size=200 %}
     {% dimension value="subcategory" /%}
     {% measure value="volume" fmt="num0" /%}
-    {% measure value="pct_of_total" fmt="num1" /%}
-    {% measure value="cumulative_pct" fmt="num1" /%}
+    {% measure value="pct_of_total" title="% of Total" fmt="pct1" /%}
+    {% measure value="cumulative_pct" title="Cumulative %" fmt="pct1" /%}
 {% /table %}
 
 > **So what?**  
@@ -513,9 +593,10 @@ Year-over-year volume by signal category. Reveals structural shifts in the compo
 -- Year-over-year volume by category
 -- Source: gold.yearly_instrument_summary
 -- Excludes Metadata
+-- Cast year to string for categorical x-axis (prevents numeric axis scaling)
 -- Recent years including current partial year
 SELECT
-    recorded_year,
+    CAST(recorded_year AS VARCHAR) AS recorded_year,
     category,
     SUM(instrument_count) AS volume
 FROM gold_yearly_instrument_summary
@@ -525,14 +606,14 @@ GROUP BY recorded_year, category
 ORDER BY recorded_year, category
 ```
 
-{% line_chart
+{% bar_chart
     data="annual_trend"
     x="recorded_year"
     y="volume"
     series="category"
     title="Annual Volume by Signal Category"
     y_fmt="num0"
-    x_fmt="id"
+    stacked=true
 /%}
 
 > **So what?**  
