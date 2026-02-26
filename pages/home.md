@@ -480,10 +480,9 @@ Apples-to-apples comparison of year-to-date instrument volume across recent year
 -- Year-over-year instrument volume and dollar totals
 -- Source: gold.yearly_instrument_summary
 -- Excludes Metadata category
--- Cast year to string so Evidence renders it as a category axis, not numeric
 -- Note: current year is partial (check data quality section for most recent recording date)
 SELECT
-    CAST(recorded_year AS VARCHAR) AS recorded_year,
+    recorded_year,
     SUM(instrument_count) AS total_instruments,
     SUM(total_amount) AS total_dollars,
     ROUND(SUM(total_amount) / 1000000.0, 1) AS dollars_millions
@@ -500,6 +499,7 @@ ORDER BY recorded_year
     y="total_instruments"
     title="Annual Instrument Volume"
     y_fmt="num0"
+    x_fmt="id"
 /%}
 
 {% table data="ytd_pace" page_size=200 %}
@@ -593,10 +593,9 @@ Year-over-year volume by signal category. Reveals structural shifts in the compo
 -- Year-over-year volume by category
 -- Source: gold.yearly_instrument_summary
 -- Excludes Metadata
--- Cast year to string for categorical x-axis (prevents numeric axis scaling)
 -- Recent years including current partial year
 SELECT
-    CAST(recorded_year AS VARCHAR) AS recorded_year,
+    recorded_year,
     category,
     SUM(instrument_count) AS volume
 FROM gold_yearly_instrument_summary
@@ -613,6 +612,7 @@ ORDER BY recorded_year, category
     series="category"
     title="Annual Volume by Signal Category"
     y_fmt="num0"
+    x_fmt="id"
     stacked=true
 /%}
 
